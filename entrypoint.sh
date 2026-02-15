@@ -203,6 +203,12 @@ $(echo -e "$AGENT_LIST")
 
   Railway skills: $SKILLS_COUNT installed (agents use them automatically)
 
+  tmux (sessions survive disconnects):
+  Ctrl+B D                    # detach — session stays running
+  Ctrl+B [                    # scroll mode (q to exit)
+  Just close the terminal to disconnect without losing work.
+  Don't type 'exit' — it kills the session and your processes.
+
   Useful commands:
   agents-info                   # show this message again
   ll / la                       # list files (long / all)
@@ -211,6 +217,11 @@ $(echo -e "$AGENT_LIST")
   Storage: /data is persistent — clone repos there.
 
 EOF
+
+# --- tmux configuration ----------------------------------------------------
+cat > "$HOME/.tmux.conf" <<'TMUX'
+set -g mouse on
+TMUX
 
 # --- Shell customisations (.bashrc_agents) ---------------------------------
 BASHRC_AGENTS="$HOME/.bashrc_agents"
@@ -232,6 +243,11 @@ alias ghlogin='gh auth login && gh auth setup-git'
 agents-info() {
     cat /etc/motd
 }
+
+# Auto-attach to tmux on SSH login
+if [ -n "$SSH_CONNECTION" ] && command -v tmux &>/dev/null && [ -z "$TMUX" ]; then
+    tmux new -A -s main
+fi
 
 SHELL
 

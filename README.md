@@ -4,7 +4,7 @@ Run [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in a long-runn
 
 - Runs 24/7. Reconnect from anywhere and pick up where you left off.
 - Repos, settings, and session history are stored on a [volume](https://docs.railway.com/volumes) at `/data` and persist across redeploys.
-- `tmux` is pre-installed. Run `tmux new -s main` to keep commands running if your connection drops, then `tmux a` to reattach.
+- SSH sessions auto-attach to a [`tmux`](https://github.com/tmux/tmux) session — if your connection drops, reconnect and pick up where you left off. To keep processes running, close your terminal or press `Ctrl+B, D` to detach. Typing `exit` kills the session.
 
 ---
 
@@ -21,7 +21,7 @@ When configuring the template, you'll find the following [environment variables]
 | Variable | Default | Description |
 |---|---|---|
 | `SSH_PASSWORD` | Auto-generated | Password for SSH access. Generated on deploy, but you can set your own. The SSH port is exposed to the internet — use a strong password (16+ characters) or key-based auth. |
-| `SSH_PUBLIC_KEY` | — | Your SSH public key for key-based auth. For teams, use per-person variables — see below. |
+| `SSH_PUBLIC_KEY` | — | Your SSH public key for key-based auth. Use `SSH_PUBLIC_KEY_LAPTOP`, `SSH_PUBLIC_KEY_PHONE`, etc. to register multiple devices. |
 
 ---
 
@@ -66,14 +66,14 @@ To use key-based auth instead of a password, paste your public key into `SSH_PUB
 
 You can set both a password and a key. Useful if you want key auth from your computer and password auth from your phone.
 
-**Teams:** Any environment variable starting with `SSH_PUBLIC_KEY` is collected as an SSH key. Each team member can add their own variable:
+**Multiple devices:** Any environment variable starting with `SSH_PUBLIC_KEY` is collected as an SSH key. Add one per device:
 
 | Variable | Value |
 |---|---|
-| `SSH_PUBLIC_KEY_ALICE` | `ssh-ed25519 AAAA... alice@laptop` |
-| `SSH_PUBLIC_KEY_BOB` | `ssh-ed25519 AAAA... bob@desktop` |
+| `SSH_PUBLIC_KEY_LAPTOP` | `ssh-ed25519 AAAA... user@laptop` |
+| `SSH_PUBLIC_KEY_PHONE` | `ssh-ed25519 AAAA... user@phone` |
 
-This way each person manages their own key without touching anyone else's variable.
+If you're in a team setting, deploy one container per developer. Each person gets their own persistent environment, tmux session, and agent logins.
 
 </details>
 
