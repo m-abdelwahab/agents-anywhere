@@ -30,11 +30,10 @@ for dir in "${PERSIST_DIRS[@]}"; do
 done
 
 # --- Sync Railway skills ---------------------------------------------------
-# Mirrors on each boot so skills always match the deployed image version.
-# - Claude Code reads from ~/.claude/skills/
+# Copies default skills into the persistent volume on each boot.
+# User-installed skills in ~/.claude/skills/ are preserved.
 if [ -d /opt/default-skills ] && [ -n "$(ls -A /opt/default-skills 2>/dev/null)" ]; then
-    skill_count=$(find /opt/default-skills -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
-    rm -rf /data/.claude/skills
+    skill_count=$(ls -1d /opt/default-skills/*/ 2>/dev/null | wc -l | tr -d ' ')
     mkdir -p /data/.claude/skills
     cp -r /opt/default-skills/* /data/.claude/skills/
     echo "Synced $skill_count Railway skills to ~/.claude/skills."
@@ -58,36 +57,49 @@ fi
 # --- SSH authentication ----------------------------------------------------
 AUTH_CONFIGURED=false
 
-# Write the public key from env var into authorized_keys
-if [ -n "${SSH_PUBLIC_KEY:-}" ]; then
-    echo "$SSH_PUBLIC_KEY" > ~/.ssh/authorized_keys
-    chmod 600 ~/.ssh/authorized_keys
-    # Validate the key format
-    if ssh-keygen -l -f ~/.ssh/authorized_keys > /dev/null 2>&1; then
-        echo "SSH public key configured."
-        AUTH_CONFIGURED=true
-    else
-        echo "==========================================================="
-        echo "ERROR: SSH_PUBLIC_KEY is not a valid OpenSSH public key."
-        echo ""
-        echo "  Expected format:"
-        echo "    ssh-ed25519 AAAAC3NzaC1lZDI1NTE5... user@host"
-        echo "    ssh-rsa AAAAB3NzaC1yc2EAAAA... user@host"
-        echo ""
-        echo "  You provided (first 40 chars):"
-        echo "    ${SSH_PUBLIC_KEY:0:40}..."
-        echo ""
-        echo "  Common mistakes:"
-        echo "    - Pasting the PRIVATE key instead of the public key"
-        echo "    - Extra line breaks or whitespace when pasting"
-        echo "    - Missing the key type prefix (ssh-ed25519 or ssh-rsa)"
-        echo ""
-        echo "  Fix: Go to Railway → your service → Variables tab"
-        echo "       and update SSH_PUBLIC_KEY with the contents of:"
-        echo "       ~/.ssh/id_ed25519.pub (on your local machine)"
-        echo "==========================================================="
-        rm -f ~/.ssh/authorized_keys
-    fi
+# Collect public keys from all SSH_PUBLIC_KEY* env vars into authorized_keys
+: > ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+
+key_count=0
+key_vars_found=false
+while IFS= read -r env_line; do
+    var_name="${env_line%%=*}"
+    var_value="${env_line#*=}"
+    [ -z "$var_value" ] && continue
+    key_vars_found=true
+    while IFS= read -r key_line; do
+        [ -z "$key_line" ] && continue
+        if echo "$key_line" | ssh-keygen -l -f /dev/stdin > /dev/null 2>&1; then
+            echo "$key_line" >> ~/.ssh/authorized_keys
+            key_count=$((key_count + 1))
+        else
+            echo "WARNING: Invalid SSH key in $var_name (first 40 chars): ${key_line:0:40}..."
+        fi
+    done <<< "$(echo "$var_value" | tr ',' '\n' | sed '/^\s*$/d')"
+done < <(env | grep '^SSH_PUBLIC_KEY' | sort)
+
+if [ "$key_count" -gt 0 ]; then
+    echo "SSH public key(s) configured: $key_count key(s)."
+    AUTH_CONFIGURED=true
+elif [ "$key_vars_found" = true ]; then
+    echo "==========================================================="
+    echo "ERROR: SSH_PUBLIC_KEY variable(s) found but no valid keys."
+    echo ""
+    echo "  Expected format:"
+    echo "    ssh-ed25519 AAAAC3NzaC1lZDI1NTE5... user@host"
+    echo "    ssh-rsa AAAAB3NzaC1yc2EAAAA... user@host"
+    echo ""
+    echo "  Common mistakes:"
+    echo "    - Pasting the PRIVATE key instead of the public key"
+    echo "    - Extra line breaks or whitespace when pasting"
+    echo "    - Missing the key type prefix (ssh-ed25519 or ssh-rsa)"
+    echo ""
+    echo "  Fix: Go to Railway → your service → Variables tab"
+    echo "       and update your SSH_PUBLIC_KEY* variable with the"
+    echo "       contents of: ~/.ssh/id_ed25519.pub (on your machine)"
+    echo "==========================================================="
+    rm -f ~/.ssh/authorized_keys
 fi
 
 # Set password for the user
@@ -95,6 +107,13 @@ if [ -n "${SSH_PASSWORD:-}" ]; then
     sudo chpasswd <<< "user:$SSH_PASSWORD"
     echo "SSH password configured."
     AUTH_CONFIGURED=true
+    if [ ${#SSH_PASSWORD} -lt 16 ]; then
+        echo "==========================================================="
+        echo "WARNING: SSH_PASSWORD is shorter than 16 characters."
+        echo "  The SSH port is exposed to the internet via Railway's TCP"
+        echo "  proxy. Use a strong password or switch to key-based auth."
+        echo "==========================================================="
+    fi
 fi
 
 if [ "$AUTH_CONFIGURED" != "true" ]; then
@@ -103,8 +122,8 @@ if [ "$AUTH_CONFIGURED" != "true" ]; then
     echo ""
     echo "  You must set at least one valid auth method in Railway Variables:"
     echo ""
-    echo "  SSH_PUBLIC_KEY  — valid contents of ~/.ssh/id_ed25519.pub"
-    echo "                    (run: cat ~/.ssh/id_ed25519.pub)"
+    echo "  SSH_PUBLIC_KEY  — your public key (~/.ssh/id_ed25519.pub)"
+    echo "                    For teams: SSH_PUBLIC_KEY_ALICE, SSH_PUBLIC_KEY_BOB, etc."
     echo ""
     echo "  SSH_PASSWORD    — any strong password for SSH login"
     echo ""
@@ -114,11 +133,17 @@ if [ "$AUTH_CONFIGURED" != "true" ]; then
     exit 1
 fi
 
-# Enable password auth in sshd config only if a password is set
+# Enable/disable password auth in sshd
 if [ -n "${SSH_PASSWORD:-}" ]; then
-    echo "PasswordAuthentication yes" | sudo tee /etc/ssh/sshd_config.d/99-password-auth.conf > /dev/null
+    sudo tee /etc/ssh/sshd_config.d/99-password-auth.conf > /dev/null <<'SSHCFG'
+PasswordAuthentication yes
+KbdInteractiveAuthentication yes
+SSHCFG
 else
-    echo "PasswordAuthentication no" | sudo tee /etc/ssh/sshd_config.d/99-password-auth.conf > /dev/null
+    sudo tee /etc/ssh/sshd_config.d/99-password-auth.conf > /dev/null <<'SSHCFG'
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+SSHCFG
 fi
 
 # --- Persist environment variables for SSH sessions ------------------------
@@ -163,7 +188,7 @@ fi
 sudo tee /etc/motd > /dev/null <<EOF
 
   ┌─────────────────────────────────────────────┐
-  │          Agents Anywhere on Railway          │
+  │          Agents Anywhere on Railway         │
   └─────────────────────────────────────────────┘
 
   Available agents:
@@ -224,6 +249,19 @@ ClientAliveCountMax 3
 AllowUsers user
 PrintMotd yes
 SSHD
+
+# --- fail2ban (password auth only) ----------------------------------------
+if [ -n "${SSH_PASSWORD:-}" ]; then
+    sudo tee /etc/fail2ban/jail.d/sshd.conf > /dev/null <<'F2B'
+[sshd]
+enabled = true
+port = 22
+maxretry = 5
+bantime = 600
+findtime = 600
+F2B
+    sudo fail2ban-server start || true
+fi
 
 echo "Ready. SSH into this container on port 22."
 

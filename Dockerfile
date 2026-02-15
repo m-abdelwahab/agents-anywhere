@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl wget vim jq tmux zip unzip \
     ripgrep tree less sudo \
     ca-certificates gnupg python3 python3-pip \
-    openssh-server \
+    openssh-server fail2ban \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
        | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
@@ -20,29 +20,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update && apt-get install -y --no-install-recommends nodejs gh \
     && rm -rf /var/lib/apt/lists/*
 
-# Global CLI tools (available to all users via system PATH)
-RUN npm install -g @anthropic-ai/claude-code \
-    && arch="$(dpkg --print-architecture)" \
-    && if [ "$arch" = "amd64" ]; then \
-         npm install -g @railway/cli; \
-       elif [ "$arch" = "arm64" ]; then \
-         tag="$(curl -fsSL https://api.github.com/repos/railwayapp/cli/releases/latest | jq -r '.tag_name')" \
-         && asset="railway-${tag}-aarch64-unknown-linux-musl.tar.gz" \
-         && curl -fsSL -o /tmp/railway.tar.gz "https://github.com/railwayapp/cli/releases/download/${tag}/${asset}" \
-         && tar -xzf /tmp/railway.tar.gz -C /tmp \
-         && install -m 0755 /tmp/railway /usr/local/bin/railway \
-         && rm -f /tmp/railway /tmp/railway.tar.gz; \
-       else \
-         echo "WARNING: Unsupported architecture for Railway CLI auto-install: $arch"; \
-       fi
+# Railway CLI
+RUN curl -fsSL https://raw.githubusercontent.com/railwayapp/cli/master/install.sh | bash
 
 # Create non-root user with sudo access (Claude Code works better as non-root)
 RUN useradd -m -s /bin/bash user \
     && printf '%s\n' "user ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/agents-anywhere \
     && chmod 0440 /etc/sudoers.d/agents-anywhere \
     && mkdir /run/sshd \
-    && mkdir -p /opt/default-skills \
-    && chown -R user:user /opt/default-skills
+    && mkdir -p /opt/default-skills /opt/claude-local/bin \
+    && chown -R user:user /opt/default-skills /opt/claude-local
 
 USER user
 WORKDIR /home/user
@@ -50,8 +37,13 @@ WORKDIR /home/user
 # User-local tools (install scripts write to ~/.local/bin or ~/.bun/bin)
 RUN curl -fsSL https://bun.sh/install | bash
 
+# Claude Code — staged to /opt so the entrypoint's ~/.local → /data/.local
+# symlink doesn't shadow the binary on first boot.
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && cp /home/user/.local/bin/claude /opt/claude-local/bin/claude
+
 # Ensure user-local bin dirs are in PATH for SSH sessions
-ENV PATH="/home/user/.bun/bin:/home/user/.local/bin:${PATH}"
+ENV PATH="/opt/claude-local/bin:/home/user/.bun/bin:/home/user/.local/bin:${PATH}"
 
 # Install agent skills from registry, then stage them to /opt so the
 # entrypoint can copy them into the persistent volume on each boot.
