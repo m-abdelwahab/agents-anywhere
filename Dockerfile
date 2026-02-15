@@ -34,16 +34,17 @@ RUN useradd -m -s /bin/bash user \
 USER user
 WORKDIR /home/user
 
-# User-local tools (install scripts write to ~/.local/bin or ~/.bun/bin)
-RUN curl -fsSL https://bun.sh/install | bash
+# User-local tools — each is symlinked into /usr/local/bin so it's in the
+# default system PATH for all contexts (SSH sessions, cron, scripts).
+RUN curl -fsSL https://bun.sh/install | bash \
+    && sudo ln -sf /home/user/.bun/bin/bun /usr/local/bin/bun \
+    && sudo ln -sf /home/user/.bun/bin/bunx /usr/local/bin/bunx
 
-# Claude Code — staged to /opt so the entrypoint's ~/.local → /data/.local
-# symlink doesn't shadow the binary on first boot.
+# Claude Code — staged to /opt so it survives the entrypoint's
+# ~/.local → /data/.local symlink swap, then linked into /usr/local/bin.
 RUN curl -fsSL https://claude.ai/install.sh | bash \
-    && cp /home/user/.local/bin/claude /opt/claude-local/bin/claude
-
-# Ensure user-local bin dirs are in PATH for SSH sessions
-ENV PATH="/opt/claude-local/bin:/home/user/.bun/bin:/home/user/.local/bin:${PATH}"
+    && cp /home/user/.local/bin/claude /opt/claude-local/bin/claude \
+    && sudo ln -sf /opt/claude-local/bin/claude /usr/local/bin/claude
 
 # Install agent skills from registry, then stage them to /opt so the
 # entrypoint can copy them into the persistent volume on each boot.
