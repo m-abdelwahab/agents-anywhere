@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Railway CLI
-RUN curl -fsSL https://raw.githubusercontent.com/railwayapp/cli/master/install.sh | bash
+RUN npm install @railway/cli
 
 # Create non-root user with sudo access (Claude Code works better as non-root)
 RUN useradd -m -s /bin/bash user \
