@@ -200,6 +200,6 @@ This happens when the container got a new host key after redeployment. Remove th
 ssh-keygen -R "[<hostname>]:<port>"
 ```
 
-Then connect again. Host keys are normally persisted across redeploys, so this should be rare.
+Then connect again. Host keys are normally persisted across redeploys, so this should be rare
 
 </details>
