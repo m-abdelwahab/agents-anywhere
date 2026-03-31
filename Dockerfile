@@ -70,3 +70,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD pgrep -x sshd > /dev/null || exit 1
 
 ENTRYPOINT ["/home/user/entrypoint.sh"]
+
